@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# usage: ./evaluate.sh --max-order 8
+
 TIMESTAMP=$(date +"%H%M_%d%m%Y")
 
 # Combine the timestamp into your final string
@@ -12,6 +14,6 @@ python3 /work/run_step3_ironmask_pini_all.py \
   --out-dir /work/results/$OUT_DIR \
   --max-order 5 \
   --jobs 4 \
-  --timeout 3600 \
+  --timeout 36000 \
   --include-pini \
   "$@"
