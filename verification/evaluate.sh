@@ -26,5 +26,4 @@ python3 /work/run_step3_ironmask_hpc2_og.py \
   --jobs 4 \
   --timeout 840000 \
   --include-pini \
-  --include-hpc2 \
   "$@"
