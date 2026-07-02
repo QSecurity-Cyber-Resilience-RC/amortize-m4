@@ -298,76 +298,147 @@ def gen_hpc2_and_from_reference_sage(shares: int) -> str:
     return sage_header(order, shares, "a b", randoms, "c") + "".join(lines)
 
 
+def _versioned_share_name(share_idx: int, update_idx: int) -> str:
+    """
+    Variable naming helper used by the faithful refresh generators.
+
+    update_idx = 0 -> a0a
+    update_idx = 1 -> a0b
+    ...
+    update_idx >= 26 -> a0v26
+
+    For the attached order-2 models, this reproduces the exact naming style:
+      a0a, a1a, a0b, a2a, ...
+    """
+    letters = "abcdefghijklmnopqrstuvwxyz"
+    if update_idx < len(letters):
+        suffix = letters[update_idx]
+    else:
+        suffix = f"v{update_idx}"
+    return f"a{share_idx}{suffix}"
+
+
 def gen_refresh_sni_exact(shares: int) -> str:
     """
-    Generate IronMask syntax for gadgets.c:refresh_sni.
+    Generate IronMask syntax for refresh_sni using the faithful in-place model
+    style of the attached refresh_sni_faithful_3.sage file.
 
-    C schedule:
-        for i:
-            for j = i+1..n-1:
-                r = rand32()
-                a[i] ^= r
-                a[j] ^= r
+    Attached order-2 / 3-share reference:
 
-    Since the C function is in-place, we model internal state as x[i]
-    and expose refreshed output as c[i].
+        #ORDER 2
+        #SHARES 3
+        #IN a
+        #RANDOMS r01 r02 r12
+        #OUT c
+        a0a = a0 + r01
+        a1a = a1 + r01
+        a0b = a0a + r02
+        a2a = a2 + r02
+        a1b = a1a + r12
+        a2b = a2a + r12
+        c0 = a0b
+        c1 = a1b
+        c2 = a2b
+
+    Generalization:
+        keep a symbolic current state for every share.
+        for each pair i < j in the same order as the C loop:
+            current[i] = current[i] + r_ij
+            current[j] = current[j] + r_ij
+        expose the final current states as c_i.
+
+    The generated .sage files are written through write_sage_text(), so only
+    the required IronMask directives are preserved; ordinary comments are
+    removed from the final .sage files.
     """
+    if shares < 2:
+        raise ValueError("shares must be >= 2")
+
     order = shares - 1
     randoms = [f"r{i}{j}" for i in range(shares) for j in range(i + 1, shares)]
     lines: List[str] = []
 
-    lines.append("# Generated from gadgets.c:refresh_sni operation schedule\n")
-    lines.append("# Initial in-place state copy: x[i] = a[i]\n")
-    for i in range(shares):
-        lines.append(f"x{i} = a{i}\n")
-    lines.append("\n")
+    current = [f"a{i}" for i in range(shares)]
+    update_count = [0 for _ in range(shares)]
 
     for i in range(shares):
         for j in range(i + 1, shares):
             r = f"r{i}{j}"
-            lines.append(f"x{i} = x{i} + {r}\n")
-            lines.append(f"x{j} = x{j} + {r}\n")
-            lines.append("\n")
 
-    lines.append("# Expose refreshed sharing as c\n")
+            ni = _versioned_share_name(i, update_count[i])
+            lines.append(f"{ni} = {current[i]} + {r}\n")
+            current[i] = ni
+            update_count[i] += 1
+
+            nj = _versioned_share_name(j, update_count[j])
+            lines.append(f"{nj} = {current[j]} + {r}\n")
+            current[j] = nj
+            update_count[j] += 1
+
     for i in range(shares):
-        lines.append(f"c{i} = x{i}\n")
+        lines.append(f"c{i} = {current[i]}\n")
 
     return sage_header(order, shares, "a", randoms, "c") + "".join(lines)
 
 
 def gen_linear_refresh_exact(shares: int) -> str:
     """
-    Generate IronMask syntax for gadgets.c:linear_refresh.
+    Generate IronMask syntax for linear_refresh using the faithful model style
+    of the attached linear_refresh_faithful_3.sage file.
 
-    C schedule:
+    Attached order-2 / 3-share reference:
+
+        #ORDER 2
+        #SHARES 3
+        #IN a
+        #RANDOMS r0 r1
+        #OUT c
+        c0 = a0 + r0
+        c1 = a1 + r1
+        t = a2 + r0
+        c2 = t + r1
+
+    Generalization:
         for i = 0..n-2:
-            r = rand32()
-            a[i]     ^= r
-            a[n - 1] ^= r
+            c_i = a_i + r_i
+        last share accumulates all r_i in order:
+            tmp0 = a_last + r0
+            tmp1 = tmp0 + r1
+            ...
+            c_last = tmp + r_last
 
-    In-place C state is modeled as x[i], output as c[i].
+    For the attached 3-share case, this reproduces the exact variable shape
+    using "t" for the first last-share temporary.
     """
+    if shares < 2:
+        raise ValueError("shares must be >= 2")
+
     order = shares - 1
     randoms = [f"r{i}" for i in range(shares - 1)]
     lines: List[str] = []
 
-    lines.append("# Generated from gadgets.c:linear_refresh operation schedule\n")
-    lines.append("# Initial in-place state copy: x[i] = a[i]\n")
-    for i in range(shares):
-        lines.append(f"x{i} = a{i}\n")
-    lines.append("\n")
-
     last = shares - 1
-    for i in range(shares - 1):
-        r = f"r{i}"
-        lines.append(f"x{i} = x{i} + {r}\n")
-        lines.append(f"x{last} = x{last} + {r}\n")
-        lines.append("\n")
 
-    lines.append("# Expose linearly refreshed sharing as c\n")
-    for i in range(shares):
-        lines.append(f"c{i} = x{i}\n")
+    for i in range(shares - 1):
+        lines.append(f"c{i} = a{i} + r{i}\n")
+
+    if shares == 2:
+        lines.append(f"c{last} = a{last} + r0\n")
+    else:
+        current = f"a{last}"
+        for i in range(shares - 1):
+            r = f"r{i}"
+            is_final = (i == shares - 2)
+
+            if i == 0 and not is_final:
+                tmp = "t"
+            elif is_final:
+                tmp = f"c{last}"
+            else:
+                tmp = f"t{i}"
+
+            lines.append(f"{tmp} = {current} + {r}\n")
+            current = tmp
 
     return sage_header(order, shares, "a", randoms, "c") + "".join(lines)
 
