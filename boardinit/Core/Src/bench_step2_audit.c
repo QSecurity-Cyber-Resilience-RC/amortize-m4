@@ -35,6 +35,10 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+
 
 extern UART_HandleTypeDef huart2;
 
@@ -746,4 +750,91 @@ void rng_direct_stress_test_v2(void) {
   }
 
   uart_write("END_RNG_STRESS_V2\r\n");
+}
+
+#define RNG_LOG_BUFFER_SIZE 16384u
+
+void rng_direct_stress_test_v2_async_log(void) {
+  static char log_buf[RNG_LOG_BUFFER_SIZE];
+  size_t log_pos = 0u;
+
+  /*
+   * Small helper macro to append formatted text safely.
+   * It prevents writing beyond the end of log_buf.
+   */
+#define LOG_APPEND(...)                                                        \
+  do {                                                                         \
+    if (log_pos < RNG_LOG_BUFFER_SIZE) {                                       \
+      int written = snprintf(&log_buf[log_pos],                                \
+                             RNG_LOG_BUFFER_SIZE - log_pos,                    \
+                             __VA_ARGS__);                                     \
+      if (written > 0) {                                                       \
+        size_t w = (size_t)written;                                            \
+        if (w >= (RNG_LOG_BUFFER_SIZE - log_pos)) {                            \
+          log_pos = RNG_LOG_BUFFER_SIZE - 1u;                                  \
+        } else {                                                               \
+          log_pos += w;                                                        \
+        }                                                                      \
+      }                                                                        \
+    }                                                                          \
+  } while (0)
+
+  cyccnt_init();
+  rng_init_direct();
+
+  LOG_APPEND("BEGIN_RNG_STRESS_V2\r\n");
+  LOG_APPEND("idx,sr_before,value,sr_after,spins_until_next_ready,"
+             "cycles_until_next_ready,error_flags_after\r\n");
+
+  for (uint32_t i = 0; i < 64u; i++) {
+    /*
+     * Wait for the current word to be ready.
+     * No UART output happens inside this timing-sensitive path.
+     */
+    while ((RNG->SR & RNG_SR_DRDY) == 0u) {
+    }
+
+    uint32_t sr_before = RNG->SR;
+    uint32_t value = RNG->DR;
+    uint32_t sr_after = RNG->SR;
+
+    /*
+     * Now test whether DRDY clears and how long it takes to become ready again.
+     */
+    uint32_t spins = 0u;
+
+    uint32_t t0 = cyccnt_read();
+
+    while ((RNG->SR & RNG_SR_DRDY) == 0u) {
+      spins++;
+    }
+
+    uint32_t t1 = cyccnt_read();
+
+    uint32_t error_flags_after = RNG->SR & (RNG_SR_CECS | RNG_SR_SECS);
+
+    g_rng_sink ^= value;
+
+    /*
+     * Store the row in RAM instead of printing it immediately.
+     */
+    LOG_APPEND("%lu,0x%08lX,0x%08lX,0x%08lX,%lu,%lu,0x%08lX\r\n",
+               (unsigned long)i,
+               (unsigned long)sr_before,
+               (unsigned long)value,
+               (unsigned long)sr_after,
+               (unsigned long)spins,
+               (unsigned long)(t1 - t0),
+               (unsigned long)error_flags_after);
+  }
+
+  LOG_APPEND("END_RNG_STRESS_V2\r\n");
+
+  /*
+   * Now print everything after the measurement loop has finished.
+   * UART delay no longer affects the RNG timing measurement.
+   */
+  uart_write(log_buf);
+
+#undef LOG_APPEND
 }

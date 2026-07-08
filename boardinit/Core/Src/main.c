@@ -30,7 +30,7 @@ UART_HandleTypeDef huart2;
 void bench_step2_audit_run(void);
 void print_clock();
 void rng_direct_stress_test();
-void rng_direct_stress_test_v2();
+void rng_direct_stress_test_v2_async_log();
 
 
 int test(void) {
@@ -84,9 +84,9 @@ int main(void) {
   // bench_step2_stack_run();
 
   print_clock();
-  rng_direct_stress_test_v2();
+  // rng_direct_stress_test_v2_async_log();
 
-  // bench_step2_audit_run();
+  bench_step2_audit_run();
 
   while (1) {
   }
